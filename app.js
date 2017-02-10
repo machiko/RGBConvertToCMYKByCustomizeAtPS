@@ -3,31 +3,61 @@ const fs = require('fs');
 const async = require('async');
 const path = require('path');
 const rgb2cmyk = require('./rgb2cmyk.json');
-const dir = __dirname + '/files';
+const dir = __dirname + '/files/';
 const commandLineArgs = require('command-line-args');
+const exec = require('child_process').exec;
 const optionDefinitions = [
   { name: 'files', alias: 'f', multiple: true, type: String }
 ];
 const options = commandLineArgs(optionDefinitions);
 
-var objs = [{name:'A'}, {name:'B'}, {name:'C'}];
+// create pdf folder if not exist
+var createFolderCmd = 'mkdir -p ' + dir + 'pdf';
+exec(createFolderCmd);
 
+// convert2cmyk
 function convert2cmyk(file, cb) {
-  var writableStream = fs.createWriteStream(path.join(dir, file + '_cmyk.ps'));
-  var originData = fs.readFileSync(path.join(dir, file + '.ps')).toString().split("\n");
-  originData.splice(63, 0, "/cmy { setcmykcolor } bind def");
-  var text = originData.join("\n");
-  fs.writeFile(path.join(dir, file + '.ps'), text, function (err) {
-    if (err) return console.log(err);
+  // todo convert svg to ps file
+  var cmd = 'inkscape --file='+ dir + file +'.svg --export-area-drawing --without-gui --export-ps='+ dir + file +'.ps --export-text-to-path';
+
+  exec(cmd, function(error, stdout, stderr) {
+    // command output is in stdout
+    if (error) {
+      console.error(`exec error: ${error}`);
+      return;
+    }
+    else {
+      // ps file
+      var writableStream = fs.createWriteStream(path.join(dir, file + '_cmyk.ps'));
+      var originData = fs.readFileSync(path.join(dir, file + '.ps')).toString().split("\n");
+      originData.splice(63, 0, "/cmy { setcmykcolor } bind def");
+      var text = originData.join("\n");
+      fs.writeFile(path.join(dir, file + '.ps'), text, function (err) {
+        if (err) return console.log(err);
+      });
+      // console.log(path.join(dir, '1015.ps'));
+      fs.createReadStream(path.join(dir, file + '.ps'))
+      .pipe(replaceStream(/(\d+(\.\d+)?\s){3}rg/g, replaceFn))
+      .pipe(replaceStream(/1 g/g, replaceFn))
+      // .pipe(process.stdout)
+      .pipe(writableStream);
+
+      // todo convert ps to pad
+      var ps2pdfCmd = 'ps2pdf files/'+ file +'_cmyk.ps files/pdf/'+ file +'.pdf';
+
+      exec(ps2pdfCmd, function(error, stdout, stderr) {
+        if (error) {
+          console.error(`exec error: ${error}`);
+          return;
+        }
+        else {
+          cb(null, file);
+        }
+      });
+    }
+    // console.log(error);
   });
-  // console.log(path.join(dir, '1015.ps'));
-  fs.createReadStream(path.join(dir, file + '.ps'))
-  .pipe(replaceStream(/(\d+(\.\d+)?\s){3}rg/g, replaceFn))
-  .pipe(replaceStream(/1 g/g, replaceFn))
-  // .pipe(process.stdout)
-  .pipe(writableStream);
-  // console.log("我在做" + obj + "这件事!");
-  cb(null, file);
+
 }
 
 async.eachSeries(options.files, function(file, callback) {
@@ -39,23 +69,6 @@ async.eachSeries(options.files, function(file, callback) {
 }, function(err){
     // console.log("err is:" + err);
 });
-
-
-// for (var i = 0; i < options.files.length; i++) {
-//   var writableStream = fs.createWriteStream(path.join(dir, options.files[i] + '_cmyk.ps'));
-//   var originData = fs.readFileSync(path.join(dir, options.files[i] + '.ps')).toString().split("\n");
-//   originData.splice(63, 0, "/cmy { setcmykcolor } bind def");
-//   var text = originData.join("\n");
-//   fs.writeFile(path.join(dir, options.files[i] + '.ps'), text, function (err) {
-//     if (err) return console.log(err);
-//   });
-//   // console.log(path.join(dir, '1015.ps'));
-//   fs.createReadStream(path.join(dir, options.files[i] + '.ps'))
-//   .pipe(replaceStream(/(\d+(\.\d+)?\s){3}rg/g, replaceFn))
-//   .pipe(replaceStream(/1 g/g, replaceFn))
-//   // .pipe(process.stdout)
-//   .pipe(writableStream);
-// }
 
 function replaceFn(match) {
   // todo calculate #hex color code
@@ -82,7 +95,6 @@ function replaceFn(match) {
       cmykCode = rgb2cmyk[j][hexCode]['mappedCMYK'] + ' cmy';
     }
   }
-
   // console.log(cmykCode);
   return cmykCode;
 }
